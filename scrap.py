@@ -8,6 +8,8 @@ from urllib import request
 from datetime import datetime
 from pyparsing import srange
 from requests_html import HTMLSession
+from openpecha import config
+import os
  
 start_url ='http://www.dsbcproject.org/canon-text/bibliography'
 
@@ -36,10 +38,12 @@ def get_page(url):
 
 
 def parse_page(response):
-    books = response.html.find('table#customers a')
+    
     base_text = {}
     book_meta={}
     src_meta={}
+    books = response.html.find('table#customers a')
+
     for book in books:
         book_page = make_request(book.attrs["href"])
         text = book_page.html.find('div.news-section',first = True).text
@@ -50,10 +54,11 @@ def parse_page(response):
         base_text.update({text_name:text})
         meta = get_meta(book_page)
         book_meta.update({text_name:meta})
+
     src_meta = get_meta(response)
     src_meta.update(book_meta)
-    create_opf(base_text,src_meta)
-
+    opf_path=create_opf(base_text,src_meta)
+    write_readme(src_meta,opf_path)
 
 def get_meta(page):
     src_meta = {}
@@ -78,7 +83,8 @@ def create_opf(base_text,src_meta):
         base=base_text
         )
 
-    opf.save(output_path=opf_path)
+    opf_path = opf.save(output_path=opf_path)
+    return opf_path
 
 
 def get_pecha(url):
@@ -88,6 +94,24 @@ def get_pecha(url):
     except:
         print("passing")
         pass
+
+def create_readme(source_metadata):
+
+    Table = "| --- | --- "
+    Title = f"|Title | {source_metadata['Title']} "
+    lang = f"|Editor | {source_metadata['Editor']}"
+    publisher = f"|Publisher | {source_metadata['Publisher']}"
+    year = f"|Year | {source_metadata['Year']}"
+
+
+    readme = f"{Title}\n{Table}\n{lang}\n{publisher}\n{year}~`"
+    return readme
+
+def write_readme(src_meta,opf_path):
+    readme = create_readme(src_meta)
+    path_parent = os.path.dirname(opf_path)
+    with open(f"{path_parent}/readme.md","w") as f:
+        f.write(readme)
 
 if __name__ == "__main__":
     dics = get_page(start_url)
