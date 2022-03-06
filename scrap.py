@@ -51,6 +51,8 @@ def parse_page(response):
     book_meta={}
     src_meta={}
     books = response.html.find('table#customers a')
+    if not books:
+        return
     for book in books:
         book_page = make_request(book.attrs["href"])
         text = book_page.html.find('div.news-section',first = True).text
@@ -123,11 +125,16 @@ def get_sub_text_pagination(text_list):
 
 def get_page_annotation(elem,char_walker):
     page_start = char_walker
-    page_end = char_walker + len(elem['text']) 
-    if elem['imgnum']:
+    page_end = char_walker + len(elem['text'])
+    if 'imgnum'in elem:
         page_annotation = {
             uuid4().hex:Page(span=Span(start = page_start,end =page_end),imgnum=elem['imgnum'])
         }
+    elif 'page_info' in elem:
+        page_annotation = {
+            uuid4().hex:Page(span=Span(start = page_start,end =page_end),page_info=elem['page_info'])
+        }
+
     else:
         page_annotation = {
             uuid4().hex:Page(span=Span(start = page_start,end =page_end))
@@ -151,28 +158,76 @@ def to_base_text_format(texts):
     return base_txt,True
 
 
-def append_imgnum(re_pattern,text):
+def append_imgnum(splitted_text,imgnums,chapter_info = None):
     base_text = []
-    splitted_text = re.split(re_pattern,text)
-    imgnums = re.findall(re_pattern,text)
-    for text,imgnum in itertools.zip_longest(splitted_text,imgnums):
+    
+    if chapter_info:
+        splitters = chapter_info
+    else:
+        splitters = imgnums    
+
+    for text,splitter in itertools.zip_longest(splitted_text,splitters):
         text = remove_double_linebreak(text)
-        if imgnum != None:
-            imgnum = re.search("\d+",imgnum).group()
-        text = change_text_format(text)    
-        base_text.append({"imgnum":imgnum,"text":text})
+        if splitter != None:
+            splitter = re.search("\d+",splitter).group()
+        text = change_text_format(text) if text != "" else text
+        if chapter_info == None:    
+            base_text.append({"imgnum":splitter,"text":text})
+        else:
+            if re.search("\(\d+\)",text):
+                imgnums = re.findall("\((\d+)\)",text)
+                in_splitted_text = re.split("\(\d+\)",text)
+                in_base_text = append_imgnum(splitted_text=in_splitted_text,imgnums=imgnums)
+                return in_base_text
+            base_text.append({"page_info":splitter,"text":text})
 
     return base_text
 
 def get_img_num(text):
     base_text = []
-    if re.search("\|\|\d+\|\|\n\n\n",text):
-        re_pattern = "\|\|\d+\|\|"
-        base_text = append_imgnum(re_pattern,text)  
-    elif re.search("\[\d+\]\n\n",text):
+    if re.search("\d+\.",text):
+        print("7")
+        re_pattern = "\r\n|\r|\n\d+."
+        splitted_text = re.split(re_pattern,text)
+        imgnums = re.findall("\r\n|\r|\n(\d+).",text)
+        base_text = append_imgnum(splitted_text,imgnums)
+    elif re.search("\|\|\s*\d+\s*\|\|\n",text):
+        print("1")
+        re_pattern = "\|\|\s*\d+\s*\|\|"
+        splitted_text = re.split(re_pattern,text)
+        imgnums = re.findall(re_pattern,text)
+        base_text = append_imgnum(splitted_text,imgnums)  
+    elif re.search("\[\d+\]\n",text):
+        print("2")
         re_pattern = "\[\d+\]"
-        base_text = append_imgnum(re_pattern,text)
+        splitted_text = re.split(re_pattern,text)
+        imgnums = re.findall(re_pattern,text)
+        base_text = append_imgnum(splitted_text,imgnums) 
+    
+    elif re.search("p\.\d+",text):
+        print("4")
+
+        re_pattern = "p\.\d+"
+        splitted_text = re.split(re_pattern,text)
+        imgnums = re.findall(re_pattern,text)
+        imgnums.insert(0,None)
+        base_text = append_imgnum(splitted_text,imgnums)
+    elif re.search("chapter\s*\d+",text,re.IGNORECASE):
+        print("5")
+        re_pattern = "chapter\s*\d+"
+        splitted_text  = re.split(re_pattern,text,re.IGNORECASE)
+        chapters = re.findall(re_pattern,text,re.IGNORECASE)
+        splitted_text = splitted_text[1:] if splitted_text[0] == "" else splitted_text
+        base_text = append_imgnum(splitted_text=splitted_text,imgnums = None,chapter_info=chapters)
+    elif re.search("\(\d+\)",text):
+        print("3")
+        re_pattern = "\(\d+\)|\[\d+\]" 
+        splitted_text = re.split(re_pattern,text)
+        imgnums = re.findall(re_pattern,text)
+        imgnums.insert(0,None)
+        base_text = append_imgnum(splitted_text,imgnums)
     else:
+        print("6")
         return text
 
     return base_text
@@ -188,7 +243,7 @@ def remove_double_linebreak(text):
         new_text += text[i]
         prev = text[i]
 
-    return new_text.strip()
+    return new_text.strip("\n").strip()
 
 
 def get_pecha(url):
@@ -234,8 +289,8 @@ def change_text_format(text):
                 base_text+=text[i]
         else:
             base_text+=text[i]
-        prev = base_text[-1]
-    return base_text
+        prev = base_text[-1]    
+    return base_text[:-1] if base_text[-1] == "\n" else base_text
 
 def write_readme(src_meta,opf_path):
     readme = create_readme(src_meta)
@@ -254,7 +309,7 @@ def publish_pecha(opf_path):
 
 def main():
     #dics = get_page(start_url)
-    get_pecha('http://www.dsbcproject.org/canon-text/book/18')
+    get_pecha('http://www.dsbcproject.org/canon-text/book/865')
     """ for dic in dics.values():
         get_pecha(dic) """
 
