@@ -6,7 +6,6 @@ from posixpath import splitext
 from pydoc import pager
 from uuid import uuid4
 from openpecha.core.pecha import OpenPechaFS
-from openpecha.core.ids import get_pecha_id
 from openpecha.core.layer import InitialCreationEnum, Layer, LayerEnum,PechaMetaData
 from openpecha.core.annotation import Page, Span
 from urllib import request
@@ -18,8 +17,12 @@ from pathlib import Path
 import os
 import re
 import itertools
+import logging
  
 start_url ='http://www.dsbcproject.org/canon-text/bibliography'
+pechas_catalog = ''
+alignment_catalog = ''
+err_log = ''
 
 def make_request(url):
     s=HTMLSession()
@@ -45,7 +48,7 @@ def get_page(url):
         return dic
 
 
-def parse_page(response):
+def parse_page(response,url):
     
     base_text = {}
     book_meta={}
@@ -54,7 +57,10 @@ def parse_page(response):
     if not books:
         return
     for book in books:
+        print(book.attrs["href"])
         book_page = make_request(book.attrs["href"])
+        if book_page.status_code != 200:
+            continue
         text = book_page.html.find('div.news-section',first = True).text
         h_section = book_page.html.find('div.news-section ul.breadcrumbs,h3,h3+h5,div.title-info')
         text_name = book_page.html.find('div.news-section h3',first=True).text
@@ -68,7 +74,12 @@ def parse_page(response):
     src_meta = get_meta(response)
     src_meta.update(book_meta)
     opf_path=create_opf(base_text,src_meta)
+    pecha_id = Path(opf_path).stem
     write_readme(src_meta,opf_path)
+    print(src_meta['Title'])
+    pechas_catalog.info(f"{pecha_id},{src_meta['Title']},{url}")
+    publish_pecha(opf_path.parent)
+
 
 def get_meta(page):
     src_meta = {}
@@ -80,6 +91,7 @@ def get_meta(page):
 
     return src_meta
 
+
 def create_opf(base_text,src_meta):
     opf_path="./opfs"
     instance_meta = PechaMetaData(
@@ -88,20 +100,22 @@ def create_opf(base_text,src_meta):
         last_modified_at=datetime.now(),
         source_metadata=src_meta)
 
-    text,has_layer = to_base_text_format(base_text)
+    text,has_layer,not_layers = to_base_text_format(base_text)
     opf = OpenPechaFS(
         meta=instance_meta,
         base=text,
-        layers = get_layers(base_text) if has_layer else {}
+        layers = get_layers(base_text,not_layers) if has_layer else {}
         )    
     opf_path = opf.save(output_path=opf_path)
     return opf_path
 
 
-def get_layers(base_text):
+def get_layers(base_text,not_layers):
     layers ={}
 
     for text_name in base_text:
+        if text_name in not_layers:
+            continue
         text_list = base_text[text_name]
         layers[text_name] = {
             LayerEnum.pagination:get_sub_text_pagination(text_list)
@@ -145,17 +159,24 @@ def get_page_annotation(elem,char_walker):
 
 def to_base_text_format(texts):
     base_txt = {}
+    not_layers = []
     for text_name in texts:
         str_text = ""
         text_list  = texts[text_name]
         if not isinstance(text_list,list):
-            return texts,False
+            not_layers.append(text_name)
+            base_txt.update({text_name:text_list})
+            continue
+            #return texts,False
         for elm in text_list:
             str_text += elm['text']+"\n\n"
 
         base_txt.update({text_name:str_text})
 
-    return base_txt,True
+    if not base_txt:
+        return base_txt,False,not_layers
+
+    return base_txt,True,not_layers
 
 
 def append_imgnum(splitted_text,imgnums,chapter_info = None):
@@ -183,52 +204,50 @@ def append_imgnum(splitted_text,imgnums,chapter_info = None):
 
     return base_text
 
+
 def get_img_num(text):
     base_text = []
     if re.search("\d+\.",text):
-        print("7")
         re_pattern = "\r\n|\r|\n\d+."
         splitted_text = re.split(re_pattern,text)
         imgnums = re.findall("\r\n|\r|\n(\d+).",text)
         base_text = append_imgnum(splitted_text,imgnums)
     elif re.search("\|\|\s*\d+\s*\|\|\n",text):
-        print("1")
         re_pattern = "\|\|\s*\d+\s*\|\|"
         splitted_text = re.split(re_pattern,text)
         imgnums = re.findall(re_pattern,text)
-        base_text = append_imgnum(splitted_text,imgnums)  
-    elif re.search("\[\d+\]\n",text):
-        print("2")
-        re_pattern = "\[\d+\]"
-        splitted_text = re.split(re_pattern,text)
-        imgnums = re.findall(re_pattern,text)
-        base_text = append_imgnum(splitted_text,imgnums) 
-    
+        base_text = append_imgnum(splitted_text,imgnums)   
     elif re.search("p\.\d+",text):
-        print("4")
-
         re_pattern = "p\.\d+"
         splitted_text = re.split(re_pattern,text)
         imgnums = re.findall(re_pattern,text)
         imgnums.insert(0,None)
         base_text = append_imgnum(splitted_text,imgnums)
     elif re.search("chapter\s*\d+",text,re.IGNORECASE):
-        print("5")
         re_pattern = "chapter\s*\d+"
         splitted_text  = re.split(re_pattern,text,re.IGNORECASE)
         chapters = re.findall(re_pattern,text,re.IGNORECASE)
         splitted_text = splitted_text[1:] if splitted_text[0] == "" else splitted_text
         base_text = append_imgnum(splitted_text=splitted_text,imgnums = None,chapter_info=chapters)
     elif re.search("\(\d+\)",text):
-        print("3")
         re_pattern = "\(\d+\)|\[\d+\]" 
         splitted_text = re.split(re_pattern,text)
         imgnums = re.findall(re_pattern,text)
         imgnums.insert(0,None)
         base_text = append_imgnum(splitted_text,imgnums)
+    elif re.search("\[\d+\]\n",text):
+        re_pattern = "\[\d+\]"
+        splitted_text = re.split(re_pattern,text)
+        imgnums = re.findall(re_pattern,text)
+        base_text = append_imgnum(splitted_text,imgnums)
     else:
-        print("6")
-        return text
+        new_text = ""
+        re_pattern = "\n\n+"
+        texts = re.split(re_pattern,text)
+        for text in texts:
+            new_text += change_text_format(text)+"\n\n"
+
+        return new_text
 
     return base_text
                 
@@ -249,12 +268,12 @@ def remove_double_linebreak(text):
 def get_pecha(url):
     """ try:
         response = make_request(url)
+        parse_page(response,url)
     except:
-        print("passing") """
+        err_log.info(f"error : {url}") """
 
     response = make_request(url)
-
-    parse_page(response)
+    parse_page(response,url)
 
 def create_readme(source_metadata):
 
@@ -263,7 +282,6 @@ def create_readme(source_metadata):
     lang = f"|Editor | {source_metadata['Editor']}"
     publisher = f"|Publisher | {source_metadata['Publisher']}"
     year = f"|Year | {source_metadata['Year']}"
-
 
     readme = f"{Title}\n{Table}\n{lang}\n{publisher}\n{year}~`"
     return readme
@@ -292,11 +310,23 @@ def change_text_format(text):
         prev = base_text[-1]    
     return base_text[:-1] if base_text[-1] == "\n" else base_text
 
+
 def write_readme(src_meta,opf_path):
     readme = create_readme(src_meta)
     path_parent = os.path.dirname(opf_path)
     with open(f"{path_parent}/readme.md","w") as f:
         f.write(readme)
+
+
+def set_up_logger(logger_name):
+    logger = logging.getLogger(logger_name)
+    formatter = logging.Formatter("%(message)s")
+    fileHandler = logging.FileHandler(f"{logger_name}.log")
+    fileHandler.setFormatter(formatter)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(fileHandler)
+
+    return logger
 
 
 def publish_pecha(opf_path):
@@ -308,8 +338,11 @@ def publish_pecha(opf_path):
 
 
 def main():
+    global pechas_catalog,err_log
+    pechas_catalog = set_up_logger("pechas_catalog")
+    err_log = set_up_logger('err')
     #dics = get_page(start_url)
-    get_pecha('http://www.dsbcproject.org/canon-text/book/865')
+    get_pecha('http://www.dsbcproject.org/canon-text/book/42')
     """ for dic in dics.values():
         get_pecha(dic) """
 
