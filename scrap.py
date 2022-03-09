@@ -57,7 +57,6 @@ def parse_page(response,url):
     if not books:
         return
     for book in books:
-        print(book.attrs["href"])
         book_page = make_request(book.attrs["href"])
         if book_page.status_code != 200:
             continue
@@ -87,7 +86,7 @@ def get_meta(page):
     book_value = page.html.find('div.title-info li div')
 
     for key,value in zip(book_key,book_value):
-        src_meta.update({key.text.replace(":",""):value.text})
+        src_meta.update({key.text.replace(":",""):value.text.strip()})
 
     return src_meta
 
@@ -266,24 +265,22 @@ def remove_double_linebreak(text):
 
 
 def get_pecha(url):
-    """ try:
+    try:
         response = make_request(url)
         parse_page(response,url)
     except:
-        err_log.info(f"error : {url}") """
+        err_log.info(f"error : {url}")
 
-    response = make_request(url)
-    parse_page(response,url)
 
 def create_readme(source_metadata):
 
     Table = "| --- | --- "
-    Title = f"|Title | {source_metadata['Title']} "
-    lang = f"|Editor | {source_metadata['Editor']}"
-    publisher = f"|Publisher | {source_metadata['Publisher']}"
-    year = f"|Year | {source_metadata['Year']}"
+    Title = f"|Title | {source_metadata['Title'].strip()} "
+    lang = f"|Editor | {source_metadata['Editor'].strip()}"
+    publisher = f"|Publisher | {source_metadata['Publisher'].strip()}"
+    year = f"|Year | {source_metadata['Year'].strip()}"
 
-    readme = f"{Title}\n{Table}\n{lang}\n{publisher}\n{year}~`"
+    readme = f"{Title}\n{Table}\n{lang}\n{publisher}\n{year}"
     return readme
 
 
@@ -335,16 +332,16 @@ def publish_pecha(opf_path):
     not_includes=[],
     message="initial commit"
     )
-
+    print("Published ",opf_path.stem)
 
 def main():
     global pechas_catalog,err_log
     pechas_catalog = set_up_logger("pechas_catalog")
     err_log = set_up_logger('err')
-    #dics = get_page(start_url)
-    get_pecha('http://www.dsbcproject.org/canon-text/book/42')
-    """ for dic in dics.values():
-        get_pecha(dic) """
+    dics = get_page(start_url)
+    #get_pecha('http://www.dsbcproject.org/canon-text/book/42')
+    for dic in dics.values():
+        get_pecha(dic)
 
 
 if __name__ == "__main__":
